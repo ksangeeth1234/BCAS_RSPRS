@@ -6,7 +6,7 @@ import { X, Database, Copy, Check, ShieldCheck } from 'lucide-react';
 interface SqlSetupModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onRefreshData: () => Promise<void>;
+  onRefreshData?: () => Promise<void>;
 }
 
 export const SqlSetupModal: React.FC<SqlSetupModalProps> = ({
@@ -41,7 +41,13 @@ CREATE TABLE IF NOT EXISTS results_submission_progress (
 -- Enable Row Level Security (RLS)
 ALTER TABLE results_submission_progress ENABLE ROW LEVEL SECURITY;
 
--- Set Public Row Level Security policies for client REST API operations
+-- Drop existing policies if re-running
+DROP POLICY IF EXISTS "Allow public select" ON results_submission_progress;
+DROP POLICY IF EXISTS "Allow public insert" ON results_submission_progress;
+DROP POLICY IF EXISTS "Allow public update" ON results_submission_progress;
+DROP POLICY IF EXISTS "Allow public delete" ON results_submission_progress;
+
+-- Create Public Row Level Security policies
 CREATE POLICY "Allow public select" 
     ON results_submission_progress FOR SELECT USING (true);
 

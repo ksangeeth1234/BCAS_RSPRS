@@ -6,10 +6,7 @@ const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publi
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const LOCAL_STORAGE_KEY = 'bcas_results_submission_progress_data_v3';
-
-// Default initial records (Empty by default)
-export const INITIAL_SAMPLE_RECORDS: ResultsSubmissionRecord[] = [];
+const LOCAL_STORAGE_KEY = 'bcas_results_submission_progress_data_v4';
 
 function isSupabaseConfigured(): boolean {
   return Boolean(SUPABASE_ANON_KEY) && SUPABASE_ANON_KEY.length > 10;
@@ -25,16 +22,16 @@ export async function fetchAllRecords(): Promise<{ data: ResultsSubmissionRecord
         .order('id', { ascending: true });
 
       if (error) {
-        console.warn('Supabase fetch notice, using local storage sync:', error.message);
-        return { data: getLocalRecords(), error: null, isFallback: true };
+        console.warn('Supabase fetch error:', error.message);
+        return { data: getLocalRecords(), error: error.message, isFallback: true };
       }
 
       if (data) {
         return { data: data as ResultsSubmissionRecord[], error: null, isFallback: false };
       }
     } catch (err: any) {
-      console.warn('Supabase query failed, using local storage:', err.message);
-      return { data: getLocalRecords(), error: null, isFallback: true };
+      console.warn('Supabase query failed:', err.message);
+      return { data: getLocalRecords(), error: err.message, isFallback: true };
     }
   }
 
@@ -45,17 +42,41 @@ export async function fetchAllRecords(): Promise<{ data: ResultsSubmissionRecord
 export async function addRecord(record: Omit<ResultsSubmissionRecord, 'id' | 'created_at' | 'updated_at'>): Promise<{ data: ResultsSubmissionRecord | null; error: string | null }> {
   if (isSupabaseConfigured()) {
     try {
+      const payload = {
+        ...record,
+        progress_submitted: Boolean(record.progress_submitted),
+        progress_not_submitted: Boolean(record.progress_not_submitted),
+        delay_submitted: Boolean(record.delay_submitted),
+        delay_not_yet_submitted: Boolean(record.delay_not_yet_submitted),
+      };
+
       const { data, error } = await supabase
         .from('results_submission_progress')
-        .insert([record])
+        .insert([payload])
         .select()
         .single();
 
-      if (!error && data) {
+      if (error) {
+        console.error('Supabase insert error:', error.message);
+        // Fallback to local storage if table doesn't exist yet, but return error note
+        const local = getLocalRecords();
+        const nextId = local.length > 0 ? Math.max(...local.map((r) => r.id || 0)) + 1 : 1;
+        const newRecord: ResultsSubmissionRecord = {
+          ...payload,
+          id: nextId,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        saveLocalRecords([newRecord, ...local]);
+        return { data: newRecord, error: `Supabase Note: ${error.message}` };
+      }
+
+      if (data) {
         return { data: data as ResultsSubmissionRecord, error: null };
       }
     } catch (e: any) {
-      console.warn('Supabase insert notice, saving locally:', e.message);
+      console.error('Supabase insert exception:', e.message);
+      return { data: null, error: e.message };
     }
   }
 
@@ -76,18 +97,26 @@ export async function addRecord(record: Omit<ResultsSubmissionRecord, 'id' | 'cr
 export async function updateRecord(id: number, record: Partial<ResultsSubmissionRecord>): Promise<{ data: ResultsSubmissionRecord | null; error: string | null }> {
   if (isSupabaseConfigured()) {
     try {
+      const payload: any = { ...record, updated_at: new Date().toISOString() };
+      if ('progress_submitted' in record) payload.progress_submitted = Boolean(record.progress_submitted);
+      if ('progress_not_submitted' in record) payload.progress_not_submitted = Boolean(record.progress_not_submitted);
+      if ('delay_submitted' in record) payload.delay_submitted = Boolean(record.delay_submitted);
+      if ('delay_not_yet_submitted' in record) payload.delay_not_yet_submitted = Boolean(record.delay_not_yet_submitted);
+
       const { data, error } = await supabase
         .from('results_submission_progress')
-        .update({ ...record, updated_at: new Date().toISOString() })
+        .update(payload)
         .eq('id', id)
         .select()
         .single();
 
-      if (!error && data) {
+      if (error) {
+        console.error('Supabase update error:', error.message);
+      } else if (data) {
         return { data: data as ResultsSubmissionRecord, error: null };
       }
     } catch (e: any) {
-      console.warn('Supabase update notice, updating locally:', e.message);
+      console.error('Supabase update exception:', e.message);
     }
   }
 
@@ -114,11 +143,13 @@ export async function deleteRecord(id: number): Promise<{ success: boolean; erro
         .delete()
         .eq('id', id);
 
-      if (!error) {
+      if (error) {
+        console.error('Supabase delete error:', error.message);
+      } else {
         return { success: true, error: null };
       }
     } catch (e: any) {
-      console.warn('Supabase delete notice:', e.message);
+      console.error('Supabase delete exception:', e.message);
     }
   }
 
